@@ -1,0 +1,39 @@
+sequenceDiagram
+    autonumber
+    participant Orch as Orchestrator workflow<br/>(main branch)
+    participant OIDC as GitHub OIDC provider<br/>(badge office)
+    participant SF as Snowflake<br/>(security desk)
+    participant API as GitHub API<br/>(via GitHub App)
+    participant Pipe as Pipeline workflow<br/>(main branch)
+
+    Note over Orch: Daily cron schedule starts the orchestrator
+
+    rect rgba(120, 160, 255, 0.12)
+    Note over Orch,SF: WIF login (no stored password or key)
+    Orch->>OIDC: Request a token, audience = your Snowflake account URL
+    OIDC-->>Orch: Signed JWT: iss, sub, aud, expires in minutes
+    Orch->>SF: Connect with the token (authenticator = WORKLOAD_IDENTITY)
+    SF->>OIDC: Fetch GitHub's public signing keys
+    Note over SF: 1. Signature is genuine<br/>2. Issuer is GitHub<br/>3. Subject = your org ID + main<br/>4. Audience = your account<br/>5. Auth policy allows WIF only
+    SF-->>Orch: Session as svc_operations_user with operations_role
+    end
+
+    Orch->>SF: SELECT from governance.operations.orchestrator_config
+    SF-->>Orch: List of pipelines to run today
+
+    rect rgba(255, 180, 90, 0.12)
+    Note over Orch,API: Starting pipelines (GitHub permission, separate from Snowflake)
+    Orch->>API: Short-lived GitHub App token, then workflow_dispatch on main
+    API-->>Pipe: Start run-pipeline.yml (fire and forget)
+    end
+
+    rect rgba(120, 160, 255, 0.12)
+    Note over Pipe,SF: Same WIF login, same subject, same service user
+    Pipe->>OIDC: Request a token, same audience
+    OIDC-->>Pipe: Signed JWT with the same sub
+    Pipe->>SF: Connect with the token
+    SF-->>Pipe: Session as svc_operations_user with operations_role
+    end
+
+    Pipe->>SF: Read its row from pipeline_config (read only)
+    Pipe->>SF: Create or overwrite tables in RAW (grants decide what is allowed)

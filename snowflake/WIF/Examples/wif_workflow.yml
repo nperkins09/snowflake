@@ -1,0 +1,50 @@
+name: orchestrator
+
+# WHEN does this run?
+on:
+  schedule:
+    - cron: "0 6 * * *"      # every day at 06:00 UTC
+  workflow_dispatch:          # also adds a "Run workflow" button so you can start it by hand
+
+# WHAT is this workflow allowed to do?
+permissions:
+  id-token: write             # allowed to ask GitHub for an ID token (needed for WIF)
+  contents: read              # allowed to read this repo's code (needed for checkout)
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest    # GitHub gives you a fresh Linux machine for this run
+    timeout-minutes: 30       # stop it if something hangs
+
+    steps:
+      # 1. Copy this repo's code onto the machine
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # 2. Install Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 3. Install the Snowflake connector (listed in requirements.txt)
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 4. Get a GitHub App token so the orchestrator can start other repos' workflows
+      #    (GitHub permission only, nothing to do with Snowflake)
+      - name: Get GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.ORCH_APP_ID }}
+          private-key: ${{ secrets.ORCH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      # 5. Run your Python code (this is where the WIF login happens)
+      - name: Run orchestrator
+        run: python orchestrate.py
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}   # used by `gh workflow run`
+          SNOWFLAKE_ACCOUNT: ${{ vars.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_AUDIENCE: ${{ vars.SNOWFLAKE_AUDIENCE }}
